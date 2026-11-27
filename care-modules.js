@@ -2,7 +2,7 @@
 /* Demonstraciniai moduliai. Tik vietiniai duomenys; ne autentifikavimo sistema. */
 (() => {
 const baseRender=render,baseAction=action,baseAdmin=renderAdmin,baseMobile=renderMobileModal,baseCollect=collectNotes,baseRelative=relativeInput,baseClient=clientForm;
-let chosen='',period='',portalTab='home',wardTab='rooms',patient='',day=TODAY,detail='care';
+let roomQuery='',roomDepartment='all',chosen='',period='',portalTab='home',wardTab='rooms',patient='',day=TODAY,detail='care';
 const esc=x=>e(String(x??'')), str=x=>String(x??''), email=x=>str(x).trim().toLowerCase(), relative=()=>ui.role.startsWith('relative:');
 const ctl=(label,act,id='',extra='')=>'<button type="button" class="btn small" data-action="'+act+'" data-id="'+esc(id)+'" '+extra+'>'+esc(label)+'</button>';
 const val=id=>document.getElementById(id)?.value||'';
@@ -45,12 +45,18 @@ function outcome(id){return [...store().actions].reverse().find(a=>a.itemId===id
 function activity(p,medicine=false){const a=outcome(p.id);return '<div class="cm-item"><div><b>'+esc(p.name)+'</b><p>'+esc(p.time)+' · '+esc(medicine?p.dose+' · '+p.route:(p.employeeId?emp(p.employeeId).name:'Nepriskirta'))+'</p><small>'+esc(a?.status||'Suplanuota')+(a?' · '+esc(a.reason||''):'')+'</small></div><div class="row">'+ctl(medicine?'Suduota':'Atlikta','cm-complete',p.id)+ctl('Neatlikta','cm-missed',p.id)+(isAdmin()?ctl('Keisti','cm-edit-item',p.id,'data-kind="'+(medicine?'med':'plan')+'"'):'')+'</div></div>'}
 function hospital(){
  const rooms=roomList(),ss=stays(),ps=people(),c=ps.find(x=>x.id===patient);
- let body=tabs([['rooms','Palatos'],['patients','Pacientai'],['schedule','Priežiūros grafikas']],wardTab,'cm-ward-tab');
- if(wardTab==='rooms'){
+ let body='';
+ {
  const total=rooms.reduce((n,r)=>n+Number(r.beds||0),0),used=ss.filter(s=>rooms.some(r=>r.id===s.roomId)).length;
- body+='<div class="cm-hospital-metrics">'+[['Palatos',rooms.length,'grid'],['Užimtos lovos',used,'people'],['Laisvos lovos',Math.max(0,total-used),'check']].map(([label,n,icon])=>'<div class="cm-hospital-metric"><span class="cm-metric-icon">'+ic(icon)+'</span><div><small>'+label+'</small><strong>'+n+'</strong></div></div>').join('')+'</div>';
+ body+='<div class="cm-hospital-metrics">'+[['Palatos',rooms.length,'grid'],['Užimtos lovos',used,'people'],['Laisvos lovos',Math.max(0,total-used),'check'],['Užimtumas',Math.round(used/Math.max(1,total)*100)+'%','grid']].map(([label,n,icon])=>'<div class="cm-hospital-metric"><span class="cm-metric-icon">'+ic(icon)+'</span><div><small>'+label+'</small><strong>'+n+'</strong></div></div>').join('')+'</div>';
  if(isAdmin())body+='<div class="cm-actions">'+ctl('+ Nauja palata','cm-room')+ctl('+ Priimti pacientą','cm-admit')+'</div>';
- body+='<div class="cm-ward-layout">'+rooms.map(r=>{
+ body+=tabs([['rooms','Palatos'],['patients','Pacientai'],['schedule','Priežiūros grafikas']],wardTab==='patient'?'patients':wardTab,'cm-ward-tab');
+ }
+ if(wardTab==='rooms'){
+ const departments=[...new Set(rooms.map(r=>r.department).filter(Boolean))];
+ body+='<div class="cm-room-tools"><h2>Palatų sąrašas</h2>'+field2('Paieška',inp('cm-room-query',roomQuery))+field2('Skyrius',opt('cm-room-dept',[{id:'all',name:'Visi skyriai'},...departments.map(d=>({id:d,name:d}))],roomDepartment))+'</div>';
+ const visible=rooms.filter(r=>(roomDepartment==='all'||r.department===roomDepartment)&&(!roomQuery||str(r.name).toLowerCase().includes(roomQuery.toLowerCase())||ss.some(s=>s.roomId===r.id&&client(s.clientId).name.toLowerCase().includes(roomQuery.toLowerCase()))));
+ body+='<div class="cm-ward-layout">'+visible.map(r=>{
  const assigned=ss.filter(s=>s.roomId===r.id),count=assigned.length;
  const beds=Array.from({length:Number(r.beds)||0},(_,i)=>{
  const stay=assigned.find(s=>Number(s.bed)===i+1),c=stay?client(stay.clientId):null;
@@ -58,12 +64,12 @@ function hospital(){
  }).join('');
  return '<section class="cm-ward-card"><header class="cm-ward-heading"><div><h2>Palata '+esc(r.name)+'</h2><p>'+esc(r.department||'Skyrius nenurodytas')+'</p></div><div class="cm-ward-capacity"><b>'+count+' / '+r.beds+'</b><small>užimta</small></div></header><div class="cm-ward-progress"><span style="width:'+Math.min(100,count/Math.max(1,r.beds)*100)+'%"></span></div><div class="cm-ward-beds">'+beds+'</div>'+(isAdmin()?'<footer class="cm-ward-footer">'+ctl('Redaguoti palatą','cm-room',r.id)+ctl('Šalinti','cm-room-delete',r.id)+'</footer>':'')+'</section>';
  }).join('')+'</div>';
- if(!rooms.length)body+=empty('Palatų nėra','Sukurkite palatą ir priskirkite pacientą.');
+ if(!visible.length)body+=empty(rooms.length?'Palatų nerasta':'Palatų nėra',rooms.length?'Pakeiskite filtrus.':'Sukurkite palatą ir priskirkite pacientą.');
  }
  else if(wardTab==='patients')body+=ps.map(c=>panel2(esc(c.name),ctl('Atidaryti kortelę','cm-patient',c.id))).join('')||empty('Pacientų nėra','');
  else if(wardTab==='schedule')body+=field2('Data',inp('cm-day',day,'date'))+ps.map(c=>panel2(esc(c.name),planFor(c.id).map(p=>activity(p)).join('')+medsFor(c.id).map(p=>activity(p,true)).join(''))).join('');
- else if(c){const s=ss.find(x=>x.clientId===c.id);body+=ctl('Atgal','cm-ward-tab','rooms')+'<h2>'+esc(c.name)+'</h2><p>Palata '+esc(rooms.find(r=>r.id===s.roomId)?.name)+' · lova '+s.bed+'</p>'+field2('Data',inp('cm-day',day,'date'))+(isAdmin()?ctl('Perkelti','cm-admit',c.id)+ctl('Išrašyti','cm-discharge',c.id):'')+tabs([['care','Priežiūra'],['meds','Vaistai'],['health','Būklė'],['history','Istorija']],detail,'cm-detail');
- if(detail==='care')body+=panel2('Dienos priežiūra',(isAdmin()?ctl('Pridėti darbą','cm-edit-item','','data-kind="plan"'):'')+planFor(c.id).map(p=>activity(p)).join(''));
+ else if(c){const s=ss.find(x=>x.clientId===c.id);body+=ctl('Grįžti į palatas','cm-ward-tab','rooms')+'<div class="cm-patient-hero"><span class="avatar">'+esc(initials(c.name))+'</span><div><h2>'+esc(c.name)+'</h2><p>Palata '+esc(rooms.find(r=>r.id===s.roomId)?.name)+' · lova '+s.bed+'</p></div></div>'+field2('Data',inp('cm-day',day,'date'))+(isAdmin()?ctl('Perkelti','cm-admit',c.id)+ctl('Išrašyti','cm-discharge',c.id):'')+tabs([['care','Priežiūra'],['meds','Vaistai'],['health','Būklė'],['history','Istorija']],detail,'cm-detail');
+ if(detail==='care'){const p=planFor(c.id),completed=p.filter(x=>outcome(x.id)?.status==='Atlikta').length;body+='<div class="cm-care-progress"><b>Atlikta '+completed+' iš '+p.length+' darbų</b><div class="cm-ward-progress"><span style="width:'+Math.round(completed/Math.max(1,p.length)*100)+'%"></span></div></div>';body+=panel2('Dienos priežiūra',(isAdmin()?ctl('Pridėti darbą','cm-edit-item','','data-kind="plan"'):'')+planFor(c.id).map(p=>activity(p)).join(''));}
  if(detail==='meds')body+=panel2('Gydytojo paskirti vaistai',(isAdmin()?ctl('Pridėti paskyrimą','cm-edit-item','','data-kind="med"'):'')+medsFor(c.id).map(p=>activity(p,true)).join('')+'<p class="hint">Tik demonstracija; ne gydymo paskyrimo sistema.</p>');
  if(detail==='health')body+=panel2('Naujas būklės įrašas','<div class="form-grid">'+field2('Savijauta',opt('cm-condition',[{id:'Stabili',name:'Stabili'},{id:'Stebima',name:'Stebima'},{id:'Pablogėjusi',name:'Pablogėjusi'}],'Stabili'))+field2('Temperatūra, °C',inp('cm-temp'))+field2('Kraujospūdis',inp('cm-bp'))+field2('Pulsas',inp('cm-pulse'))+field2('Saturacija',inp('cm-spo'))+field2('Apetitas',inp('cm-appetite'))+field2('Vidinės pastabos',area('cm-private'))+field2('Santrauka artimiesiems',area('cm-family'))+field2('Nuotraukos artimiesiems','<input id="cm-health-photos" type="file" multiple accept="image/jpeg,image/png,image/webp">')+'</div><label><input id="cm-share" type="checkbox"> Skelbti santrauką ir atliktus darbus artimiesiems</label>'+ctl('Išsaugoti įrašą','cm-save-entry',c.id));
  if(detail==='history')body+=store().entries.filter(x=>x.clientId===c.id).sort((a,b)=>b.date.localeCompare(a.date)).map(x=>panel2(esc(x.date)+' '+esc(x.time),'<p>'+esc(x.condition)+' · '+esc(x.privateComment)+'</p><p>'+esc(x.familyComment)+'</p><small>'+esc(emp(x.by).name)+' · '+(x.share?'Paskelbta':'Vidinis įrašas')+'</small>')).join('')+store().stays.filter(x=>x.clientId===c.id).map(x=>'<p>Apgyvendinimas: '+esc(x.start)+' – '+esc(x.end||'dabar')+'</p>').join('');
@@ -110,6 +116,6 @@ action=async function(a,b={dataset:{}}){
  if(a==='cm-save-entry'){if(!people().some(c=>c.id===id))return;const share=tick('cm-share'),p={id:uid(),clientId:id,date:day,time:new Date().toLocaleTimeString('lt-LT',{hour:'2-digit',minute:'2-digit'}),condition:val('cm-condition'),temp:val('cm-temp'),bp:val('cm-bp'),pulse:val('cm-pulse'),spo:val('cm-spo'),appetite:val('cm-appetite'),privateComment:val('cm-private'),familyComment:val('cm-family'),share,by:ui.role,sharedTasks:planFor(id).filter(x=>outcome(x.id)?.status==='Atlikta').map(x=>x.name),familyPhotos:await readPhotos('cm-health-photos')};h.entries.push(p);if(!commit())h.entries.pop();return}
  }catch(err){toast(err.message||'Veiksmas nepavyko')}
 };
-document.addEventListener('change',ev=>{const x=ev.target;if(x.id==='cm-admit-room'||x.id==='cm-admit-client')syncAdmission(x.id==='cm-admit-client'?x.value:'',val('cm-admit-bed'));if(x.id==='cm-client'){chosen=x.value;render()}if(x.id==='cm-period'){period=x.value;render()}if(x.id==='cm-day'&&x.value){day=x.value;render()}if(x.id==='cm-notify'&&relative()){const a=accounts().find(a=>a.id===ui.role.slice(9));for(const c of a?.clients||[])for(const z of c.relatives)if(email(z.email)===a.id)z.notify=x.checked;persist()}});
+document.addEventListener('change',ev=>{const x=ev.target;if(x.id==='cm-admit-room'||x.id==='cm-admit-client')syncAdmission(x.id==='cm-admit-client'?x.value:'',val('cm-admit-bed'));if(x.id==='cm-room-query'){roomQuery=x.value;render()}if(x.id==='cm-room-dept'){roomDepartment=x.value||'all';render()}if(x.id==='cm-client'){chosen=x.value;render()}if(x.id==='cm-period'){period=x.value;render()}if(x.id==='cm-day'&&x.value){day=x.value;render()}if(x.id==='cm-notify'&&relative()){const a=accounts().find(a=>a.id===ui.role.slice(9));for(const c of a?.clients||[])for(const z of c.relatives)if(email(z.email)===a.id)z.notify=x.checked;persist()}});
 render();
 })();
